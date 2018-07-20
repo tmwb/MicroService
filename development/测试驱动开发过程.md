@@ -1,0 +1,1107 @@
+#测试驱动开发过程
+###基于一个简单的课程管理服务
+
+###相关知识点：
+	1. 业务描述及分析
+	2. SpringBoot Project创建
+	3. Maven的POM文件配置
+	4. Junit测试过程及断言的使用
+	5. 测试驱动开发的逆向思维训练
+	6. 领域建模及领域模型关系
+	7. JPA领域模型注解的用法及配置文件
+	8. JPA Query API
+	9. Spring IoC注解的用法：@Service和@Autowired
+	10.Java重构技巧
+	11.接口暴露和Spring Restful相关注解的用法
+	12.Spring RestController实体序列化与反序列化定制
+	13.用@JsonView定制Restful输出
+
+##1. 讲故事
+
+做一个简单的课程管理服务，使得:
+
+* 教务人员可以管理课程、教材；学生可以选课、选教材。
+* 每门课程都有名称，分为必修课和选修课两种，选修课有人数限制，满员的选修课就不能再选。
+* 每门课程提供一种或以上的教材供学生选择。
+* 教材都有名称，并且有数量限制，没了就不能选该教材，
+* 如果选修课程的所有教材都没了，那这门选修课也不能选择，必修课没有这个限制。
+* 学生必须登记所有必修课，选修课至少选择一门。
+* 教务人员可以多方位的查看数据：学生表、课程登记表、教材领取表。
+* 学生可以通过课程登记表来选择课程及教材。
+* 学生还可以查看选修课同学的通讯录。
+
+##2. 找出参与者
+
+* 教务人员manager
+* 学生student
+	
+从业务描述中可以看出manager的变化对系统没有任何影响，此例就暂时不考虑他了。
+	
+##3. 场景描述
+就是解析上述故事，让故事逻辑化，主要是理顺表达顺序和表达方式。
+先讲表达方式，主要是每一句话要说清楚这么几件事：
+
+* 谁who
+* 在什么时间when
+* 在什么地方where
+* 做什么事what
+* 产生什么结果result
+
+表达顺序，自然形成的逻辑顺序，有前置条件事情必须等前置任务做完才能做。
+比如：教务人员在系统中可以为课程指定一本或多本教材。很显然，在指定教材之前，必须先把教材添加到系统中。
+
+我们对上述故事进行分析后得出。
+
+####需求用例：
+
+	a. 教务人员在系统中登记课程course；课程都有名称，并且分为必选课和选修课两种类型；
+		选修课有人数上限，而必修课没有。
+	b. 教务人员在系统中为课程指定教材book，可以指定一本或多本教材；
+		教材都有名称和数量上限。
+	c. 学生首先要在在系统中注册，注册时提供姓名和联系方式。
+	d. 学生根据课程登记表的情况选择课程及相应教材；其中：
+		. 必修课必选（假定教材无限）
+		. 当满员或没有教材时不能选择该选修课。
+	e. 学生可以查看已选选修课同学的联系方式，没选的不能看。
+	f. 教务人员可以查看学生表、课程登记表、教材领取表。
+
+这样，逻辑表述结束之后，我们可以发现，一般情况下：
+
+* 名词有可能是对象或者对象属性：
+	* 教务人员、学生，课程、教材；这些是对象；
+	* 名称、类型、座位数等；这些是属性。
+* 动词是方法，登记、指定、注册、选择等。
+* 状语、定语是限定，在系统中、在课程登记中等；
+* 还有一些对象属性也会有限定作用，比如满员的课程学生就不能选修，教材被领完就不能再领等等。当然还有更复杂一点儿的，比如所有教材被领完的选修课，学生就不能再选修该课程了。
+* 量词是关联关系，比如每门课程可以指定一本或多本教材，而每本教材必然属于某一门课程，这很明显是一对多的关系
+	其中还有一些隐含的关联关系，比如学生必须选择所有必选课，而每门必选课肯定有多名学生，这明显是多对对的关系
+
+##4. 创建工程
+	
+* Eclipse, 在Eclipse Marketplace中安装一下Spring Tools,以前叫Spring Tool Suite
+
+我们打开eclipse
+
+* 创建一个Spring Boot工程，叫做microservice_demo, 为什么要选Spring Boot工程，就是因为它能搞的都搞了，省的咱们自己再去配置各种参数。
+	* Name: microservice_demo
+	* Type: Maven
+	* Java Version: 跟你本机JVM版本相同
+	* Packaging: Jar
+	* Package: tm.demo
+	* Spring Boot Version: 这个不要选SnapShot版本
+* Spring Boot工程已经配置好了JUnit，咱们在后面直接用。
+* 创建是要选择『Spring Starter Project』
+* 工程配置中注意一下Java的版本跟你本机版本一致即可，package要按项目要求定义好
+* 在项目依赖列表中，选择web、jpa、mysql三项
+
+然后就创建吧。 如果你本机maven库不全，创建过程会比较慢，等吧。
+
+##5. 开始写代码
+在src/test/java目录下，有个叫MicroserviceDempApplicationTests.java的文件，打开它。<br/>
+然后我们把上面的场景描述翻译成代码......<br/>
+<br/>
+首先我们先假想一些测试数据：
+
+	两门课程：一门必修课，一门选修课，人数上限是3
+	四本教材：前两本是必修课教材，数量分别是3，10；后两本是选修课教材，数量分别是1，5
+	四名学生
+
+从需求用例a开始写，
+
+test方法上有个@Test注解，你只要知道它用来表明下面的方法是个测试单元就行了 <br/>
+我们新建一个test方法叫test1，然后在其中写代码。记得注解@Test<br/>
+
+**注意：有报错的地方，等故事讲完再改，eclipse有非常完善的修改建议。**
+	
+####a. 教务人员在系统中登记课程course；课程都有名称，并且分为必选课和选修课两种类型； 选修课有人数上限，而必修课没有。
+先登记两门课，其中一门必修课，另外一门选修课，人数上限是3。<br/>
+	
+登记课程，就是实例化一个课程类，参数分别是名称、类型、人数上限。<br/>
+
+	@Test
+	public void test1() {
+		Course c1 = new Course(1L, "计算机概论", true, 0);
+		c1 = persist(c1);
+	}
+一堆错误，不用管。<br/>
+接下来，我们要考虑的是登记课程这个动作，对系统产生了什么影响？<br/>
+
+*系统中多了一门课，这门课叫『计算机概论』，是必修课，无人数上限*
+
+那么我们按上面这段话，写断言。
+
+使用Junit的断言，别用spring的
+	
+	Assert.assertNotNull()
+	Assert.assertTrue()
+	Assert.assertEquals()
+
+使用断言时要注意： **新建实体类后的断言一定要检查ID非空和关键属性的正确性**
+
+课程中对业务有影响的属性时类型和人数上限，此处因为我们只有两类，所有用逻辑类型表达。<br/>
+
+	@Test
+	public void test1() {
+		Course c1 = new Course(1L, "计算机概论", true, 0);  	//登记课程
+		c1 = Data.persist(c1);						//持久化到系统，返回持久化结果
+		Assert.assertEquals(1, Data.courses.size());		//系统中多了一门课程
+		Assert.assertNotNull(c1);							//这门课程的对象非空
+		Assert.assertNotNull(c1.getId());			//id非空，实体类必有唯一id
+		Assert.assertEquals("计算机概论", c1.getName());		//课程名称是。。。
+		Assert.assertTrue(c1.getRequired());				//是必修课
+		Assert.assertEquals(0, c1.getSeats());				//人数上限是0
+	}
+
+这里的id写死了，这是不对的。 <br/>
+此例中Id用计数法生成，即我们定义三个静态变量，courseCount\bookCount\studentCount, 对应的id通过累加获得。写个生成函数:
+
+	static Long courseCount = 0L, bookCount = 0L, studentCount = 0L;
+
+	public static Long gen(String type) {
+		switch (type) {
+		case "course":
+			return ++courseCount;
+		case "book":
+			return ++bookCount;
+		case "student":
+			return ++studentCount;
+		default:
+			return null;
+		}
+	}
+然后把Course构造函数的第一个参数改为：gen("course")
+
+按照eclipse的修改建议，改正代码中的所有错误提示，使得代码可执行。<br/>
+修改完后，我们新建了实体类Course和一个假想的数据代理类Data:<br/>
+
+	public class Course implements Serializable{
+		private static final long serialVersionUID = -8417802198974836736L;
+		private Long id;
+		private String name;
+		private Boolean required;
+		private Integer seats;
+		private Date created;
+
+		public Course() {}
+
+		public Course(Long id, String name, boolean required, int seats) {
+			this.id = id;
+			this.name = name;
+			this.required = required;
+			this.seats = seats;
+			if (this.created == null)
+				this.created = new Date();
+		}
+		//这里有一大段的Getter和Setter，限于篇幅我去掉了。
+
+		@Override
+		public int hashCode() {
+			final int prime = 31;
+			int result = 1;
+			result = prime * result + ((id == null) ? 0 : id.hashCode());
+			return result;
+		}
+
+		@Override
+		public boolean equals(Object obj) {
+			if (this == obj)
+				return true;
+			if (obj == null)
+				return false;
+			if (getClass() != obj.getClass())
+				return false;
+			Course other = (Course) obj;
+			if (id == null) {
+				if (other.id != null)
+					return false;
+			} else if (!id.equals(other.id))
+				return false;
+			return true;
+		}
+	}
+<br/>
+
+	public class Data {
+		public static Map<Long, Course> courses;
+
+		public static Course persist(Course c) {
+			// TODO Auto-generated method stub
+			return null;
+		}
+	}
+
+系统此时没有错误了，我们执行这个测试。<br/>
+
+* 第一个错误：Failed to load ApplicationContext，这是因为我们添加了JPA依赖，得告诉他数据源是什么<br/>
+配置文件，在src/main/resources下面有个application.properties的空文件，<br/>
+先改个名字，改为application.yml,这是springboot支持的另外一种配置格式，缩进形式简明易懂<br/>
+把下面这段代码复制进去，这是配置mysql数据连接用的<br/>
+其中：demo是数据库名，ip地址、端口按你的改，其他没啥可改的。<br/>
+
+	spring:
+	  datasource:
+	    url: jdbc:mysql://localhost:3306/demo?characterEncoding=UTF-8
+	    username: root
+	    password: 12345678
+	    driver-class-name: com.mysql.jdbc.Driver
+	  jpa:
+	    database: MYSQL
+	    show-sql: true
+	    hibernate:
+	      ddl-auto: update
+	      naming-strategy: org.hibernate.cfg.ImprovedNamingStrategy
+	    properties:
+	      hibernate:
+	        dialect: org.hibernate.dialect.MySQL5Dialect
+	  jackson:
+	    date-format: yyyy-MM-dd HH:mm:ss
+	
+	logging.level.org.springframework.web: DEBUG
+	logging.level.org.hibernate: ERROR  
+
+
+还有在src/main/java目录下的tm.demo包新建一个JpaConfiguration类<br/>
+
+	@Order(Ordered.HIGHEST_PRECEDENCE)
+	@Configuration
+	@EnableTransactionManagement(proxyTargetClass = true)
+	@EnableJpaRepositories(basePackages = "tm.demo")
+	@EntityScan(basePackages = "tm.demo.entity")
+	public class JpaConfiguration {
+
+	    @Bean
+	    PersistenceExceptionTranslationPostProcessor persistenceExceptionTranslationPostProcessor(){
+	        return new PersistenceExceptionTranslationPostProcessor();
+	    }
+	}
+
+好多注解！只要关注两个：<br/>
+
+* @EnableJpaRepositories 这是激活实体类扫描的命令，参数是包的根路径
+* @EntityScan 这是实体类扫描的包声明，这个要按实际的来
+
+* 第二个报错： java.lang.ClassNotFoundException: javax.xml.bind.JAXBException，这是因为jaxb版本不一致造成的，在maven配置文件中加一个jaxb依赖即可。
+	
+	<dependency>
+		<groupId>javax.xml.bind</groupId>
+		<artifactId>jaxb-api</artifactId>
+	</dependency>
+ 
+* 第三个错误，Data中的courses是null, Data中改成这样
+
+	public static Map<Long, Course> courses = new HashMap<Long, Course>();
+
+* 第四个错误，expected<1> but was: <0>
+
+	public static Course persist(Course c) {
+		courses.put(c.getId(), c);
+		return courses.get(c.getId());
+	}
+
+再运行，测试通过了，绿了。
+
+你也可以在工程所在的目录下运行：
+
+	mvn clean test
+
+####我们对照上面的课程登记过程，再登记另外一个选修课。
+
+	Course c2 = new Course(gen("course"), "Basic语言", false, 3); // 登记课程
+	c2 = Data.persist(c2); // 持久化到系统，返回持久化结果
+	Assert.assertEquals(2, Data.courses.size()); // 系统中多了一门课程
+	Assert.assertNotNull(c2); // 这门课程的对象非空
+	Assert.assertNotNull(c2.getId()); // id非空，实体类必有唯一id
+	Assert.assertEquals("Basic语言", c2.getName()); // 课程名称是。。。
+	Assert.assertTrue(!c2.getRequired()); // 非必修课
+	Assert.assertEquals(Integer.valueOf(3), c2.getSeats()); // 人数上限是3
+
+创建实体类时要注意：
+
+* 所有实体类都要有长整型主键id,主键id不得在构造函数中更新或采用数据库相关功能生成。
+* 所有实体类必须有一个空参数的构造函数，当然如果没有其他构造函数的情况下，空参构造函数可以忽略
+* 一般情况下实体类要记录创建时间，所以会增加一个属性created，但要注意的是：
+	在构造函数中，这个创建时间只有为空时才能更新, 不然这个时间就会在每次更新是发生变化。
+* 对于一对多或者多对多关系要用到Collection时，请使用Set，不要用List。
+* getter和setter都用eclipse source搞定
+* 每个实体类都要继承序列化接口Serializable
+* 每个实体类都要重载hashCode和equals方法
+
+需求用例b，我们新建一个方法test2，注意写上@Test注解<br/>
+	
+####b. 教务人员在系统中为课程指定教材book，可以指定一本或多本教材；教材都有名称和数量上限。
+教务人员为课程指定教材分两步：先得有教材，然后才能指定。<br/>
+所以先要实例化教材，然后才能指定教材。<br/>
+此例中，我们实例化4本教材，教材属性有名称、数量，前两本分配给必修课、后两本分配给选修课<br/>
+他们的数量分别是：3，10，1，3<br/>
+实例化后用断言判定ID非空和数量是否正确。<br/>
+
+	@Test
+	public void test2() {
+		Book b1 = new Book(gen("book"),"《计算机概论》",3); 	// 登记教材
+		b1 = Data.persist(b1); 					// 持久化到系统，返回持久化结果
+		Assert.assertEquals(1, Data.books.size());			// 系统中多了一本教材
+		Assert.assertNotNull(b1);							// 对象非空
+		Assert.assertNotNull(b1.getId());					// id非空
+		Assert.assertEquals("《计算机概论》", b1.getName());	// 名称
+		Assert.assertEquals(Integer.valueOf(3), b1.getCount());// 数量
+	}
+执行测试，直到绿了。<br/>
+照上面的代码继续登记剩下的3本教材。<br/>
+
+<br/>
+然后运行这两个测试用例，保证测试通过<br/>
+接下来指定教材。。。。<br/>
+新建测试方法test3<br/>
+
+调用函数assignBook2Course, 这个函数的参数是教材id和课程id。<br/>
+我们知道，这个业务执行的结果，也就是对系统的影响是：课程指定教材列表中包含这本教材，教材所属课程是这个课程,并且课程的教材集数量加1。根据这句话写断言。<br/>
+我们完善assignBook2Course函数。<br/>
+
+	@Test
+	public void test3() {
+		Course c = Data.getCourse(1L);
+		int count = 0;
+		assignBook2Course(1L, 1L); // 把id=1L的教材指定给id=1L的课程
+		c = Data.getCourse(1L);
+		Book b = Data.getBook(1L);
+		Assert.assertEquals(count + 1, c.getBooks().size()); // 课程的教材数量为1
+		Assert.assertTrue(c.getBooks().contains(b)); // 课程的教材集包含这本教材
+		Assert.assertEquals(c, b.getCourse()); // 教材所属课程	
+	}
+	public void assignBook2Course(Long bookId, Long courseId) {
+		Book b = Data.getBook(bookId);
+		Course c = Data.getCourse(courseId);
+		
+		b.setCourse(c);
+		c.getBooks().add(b);
+		b = Data.persist(b);
+	}
+
+Data类中添加方法：
+	
+	public static Book getBook(Long id) {
+		return books.get(id);
+	}
+
+	public static Course getCourse(Long id) {
+		return courses.get(id);
+	}
+
+Book类中添加属性：记得Getter和Setter
+	
+	private Course course;
+
+Course类中添加属性：
+	
+	private Set<Book> books;
+
+在test3中，取出Book和Course后要断言检查非空。
+
+	public void assignBook2Course(Long bookId, Long courseId) {
+		Book b = Data.getBook(bookId);
+		Course c = Data.getCourse(courseId);
+
+		b.setCourse(c); // 所属课程
+		c.getBooks().add(b); // 课程的教材集增加
+		b = Data.persist(b); // 持久化一下
+	}
+
+* 第一个报错：NullPointerException, c.getBooks(),这里要加个空值判断。
+
+	if (c.getBooks() == null)
+		c.setBooks(new HashSet<Book>());
+测试通过后，将剩下的三本交给分别指定给课程1和课程2。<br/>
+
+	@Test
+	public void test3() {
+		assignBook2Course(1L, 1L); // 把id=1L的教材指定给id=1L的课程
+		assignBook2Course(2L, 1L); // 把id=2L的教材指定给id=1L的课程
+		assignBook2Course(3L, 2L); // 把id=3L的教材指定给id=2L的课程
+		assignBook2Course(4L, 2L); // 把id=4L的教材指定给id=2L的课程
+	}
+
+assignBook2Course函数中的：
+
+	Assert.assertEquals(1, c.getBooks().size()); // 课程的教材数量为1
+改为：
+	Assert.assertEquals(count+1, c.getBooks().size()); // 课程的教材数量为1
+
+其中的count是在指定教材前课程的教材集的数量。<br/>
+	
+	int count = c.getBooks().size();
+
+运行测试，使得测试通过。<br/>
+<br/>
+这里要注意的是：<br/>
+**随着测试方法的增多，这些方法执行的顺序是随机的，如果有顺序要求，请在测试类前加上注解，强制其按函数声明顺序执行。** 
+
+	@FixMethodOrder(MethodSorters.JVM) 
+
+接下来是需求用例c，新建一个方法test4<br/>
+####c. 学生首先要在在系统中注册，注册时提供姓名和联系方式。
+学生注册同样也是实例化学生类而已，注意id生成和id非空检查即可,记得把实例化的对象保存到Map<br/>
+
+	@Test
+	public void test4() {
+		Student s = new Student(gen("student"),"赵毅","13511111111"); // 学生注册
+		s = Data.persist(s);										 // 持久化
+		Assert.assertEquals(1, Data.students.size());
+		Assert.assertNotNull(s);
+		Assert.assertNotNull(s.getId());
+	}
+按修改建议：创建Student类、修改Data<br/>
+执行测试，直到通过<br/>
+继续把剩余的3名学生注册完。<br/>
+
+接下来是需求用例d，新建一个方法test5
+####d. 学生根据课程登记表的情况选择课程及相应教材；其中：
+
+* 必修课必选（假定教材无限,第一本没了就选第二本）
+* 当满员或没有教材时不能选择该选修课。
+
+写业务方法selectCourse，其参数是：学生id、课程id、教材id<br/>
+先让这四位学生都选必修课，教材都用第一本。<br/>
+
+	public void selectCourse(Long studentId, Long courseId, Long bookId) {
+		Student s = Data.getStudent(studentId);
+		Course c = Data.getCourse(courseId);
+		Book b = Data.getBook(bookId);
+		
+		s.getCourses().add(c);
+		s.getBooks().add(b);
+		c.getStudents().add(s);
+		b.getStudents().add(s);
+	}
+
+前三个学生做出选择后，其断言包括：<br/>
+
+* 学生选课列表中包含该课程
+* 学生选书列表中包含该教材
+* 选择该课程的学生列表中包含该学生
+* 选择该教材的学生列表中包含该学生
+
+	@Test
+	public void test5() {
+		selectCourse(1L, 1L, 1L); // 学生1选择课程1和教材1
+		Student s = Data.getStudent(1L);
+		Course c = Data.getCourse(1L);
+		Book b = Data.getBook(1L);
+		Assert.assertTrue(s.getCourses().contains(c));
+		Assert.assertTrue(s.getBooks().contains(b));
+		Assert.assertTrue(c.getStudents().contains(s));
+		Assert.assertTrue(b.getStudents().contains(s));
+
+		selectCourse(2L, 1L, 1L); // 学生2选择课程1和教材1
+		selectCourse(3L, 1L, 1L); // 学生3选择课程1和教材1
+		selectCourse(4L, 1L, 1L); // 学生4选择课程1和教材1
+	}
+
+而第四个学生做出同样的选择后，其断言应该是上面四个断言的非，原因很简单因为第一本书只有三本被前三位领走了，第四位学生只能选择第二本教材。
+
+	selectCourse(4L, 1L, 1L); // 学生4选择课程1和教材1
+	s = Data.getStudent(4L);
+	c = Data.getCourse(1L);
+	b = Data.getBook(1L);
+	Assert.assertTrue(!s.getCourses().contains(c));
+	Assert.assertTrue(!s.getBooks().contains(b));
+	Assert.assertTrue(!c.getStudents().contains(s));
+	Assert.assertTrue(!b.getStudents().contains(s));
+
+* 空值报错时，selectCourse中加上：
+
+	if (s.getCourses() == null)
+		s.setCourses(new HashSet<Course>());
+	if (s.getBooks() == null)
+		s.setBooks(new HashSet<Book>());
+	if (c.getStudents() == null)
+		c.setStudents(new HashSet<Student>());
+	if (b.getStudents() == null)
+		b.setStudents(new HashSet<Student>());
+
+目前可以看到上面的断言红了，说明selectCourse函数中必须要检查教材的数量。
+
+	if (b.getCount() == b.getStudents().size())
+		return;
+
+所以再让第四位学生选一次，课程不变，教材用第二本，断言跟前三位学生的一样。<br/>
+
+	selectCourse(4L, 1L, 2L); // 学生4选择课程1和教材2
+	s = Data.getStudent(4L);
+	c = Data.getCourse(1L);
+	b = Data.getBook(2L);
+	Assert.assertTrue(s.getCourses().contains(c));
+	Assert.assertTrue(s.getBooks().contains(b));
+	Assert.assertTrue(c.getStudents().contains(s));
+	Assert.assertTrue(b.getStudents().contains(s));
+
+最后加入数量断言。
+	c = Data.getCourse(1L);
+	Assert.assertEquals(4, c.getStudents().size()); //必修课学生4人
+	b = Data.getBook(1L);
+	Assert.assertEquals(3, b.getStudents().size());	//教材1学生3人，因为只有三本
+	b = Data.getBook(2L);
+	Assert.assertEquals(1, b.getStudents().size());	//教材2学生1人
+
+开始执行测试。根据报错，完善selectCourse函数，直到绿条出现。<br/>
+
+接下来让这四位同学选择选修课, 这里课程人数上限为3，第一本教材只有1本，第二本教材有3本<br/>
+第一位学生选了选修课第一本教材后，其断言跟上面相同<br/>
+第二位学生选了选修课第一本教材后，其断言跟上面相反，因为教材没了。<br/>
+第二位学生选了选修课第二本教材后，其断言跟上面相同<br/>
+第三位学生选了选修课第二本教材后，其断言跟上面相同<br/>
+第四位学生选了选修课第二本教材后，其断言跟上面相反，因为满员了。<br/>
+
+新建test6<br/>
+在第四位学生选择选修课第二本教材时，测试未通过，要加入相应的满员判断。
+
+	if (!c.getRequired() && c.getSeats() == c.getStudents().size()) //选修课满员判定
+	return;
+
+最后加入数量断言：
+
+	c = Data.getCourse(2L);
+	Assert.assertEquals(3, c.getStudents().size()); //课程学生3人
+	b = Data.getBook(3L);
+	Assert.assertEquals(1, b.getStudents().size()); //教材3只有1本
+	b = Data.getBook(4L);
+	Assert.assertEquals(2, b.getStudents().size()); //教材3只有1本		
+
+
+执行测试，直到绿了。<br/>
+	
+##6. 此时，我们的业务功能开发已经完成了。 接下来要进行一些简单的重构。
+
+我们首先找出代码中跟业务无关的事物，把它摘出来，变成接口调用的形式。<br/>
+最容易看出来的有两个：id生成机制和数据存储<br/>
+	
+新建一个GID类，将此gen和三个静态变量一并移至GID类，并改为静态公开方法。<br/>
+运行测试<br/>
+
+**将来在微服务或云计算架构下，所有实体类id的生成都是全局式的接口调用，不再采用本地生成或数据库自增量的方式。**
+		
+数据存储，我们已经写了Data这个数据管理类，所以没啥要改的。
+
+接着我们做一些函数抽取，就是找出执行内容一样的多行代码，抽取到函数中。<br/>
+比如实体的实例化和保存代码：<br/>
+
+	Course c = new Course(GID.gen("course"), "计算机概论", true, 0); // 登记课程
+	c = Data.persist(c); // 持久化到系统，返回持久化结果
+
+我们把它抽取出来，放到函数saveCourse中<br/>
+
+	public Course saveCourse(Long id, String name, Boolean required, Integer seats) {
+		Course c = new Course(id, name, required, seats);
+		c = Data.persist(c); // 持久化到系统，返回持久化结果
+		return c;
+	}
+
+教材、学生的同样处理<br/>
+
+	public Book saveBook(Long id, String name, Integer count) {
+		Book b = new Book(id, name, count);
+		b = Data.persist(b); // 持久化到系统，返回持久化结果
+		return b;
+	}
+
+	public Student saveStudent(Long id, String name, String contact) {
+		Student s = new Student(id, name, contact);
+		s = Data.persist(s); // 持久化
+		return s;
+	}
+
+运行测试<br/>
+	
+根据单一职责原则，测试类是用来测试的，不能做其他的事儿，所以类中这些函数都需要把它们放到合适的类中去。<br/>
+我们看看目前有的函数：<br/>
+	
+	saveCourse这些都是课程相关的业务
+	saveBook、assignBook2Course是教材相关的业务
+	saveStudent、selectCourse是学生相关的业务
+
+那么我们建立三个服务类，把这些方法移过去。CourseService\BookService\StudentService<br/>
+把方法移过去后都改为public<br/>
+在测试类中，实例化这三个服务类<br/>
+修改测试类中的接口调用方式，然后执行测试<br/>
+	
+接下来，我们继续观察会发现，在测试类中大多接口调用都是调用服务类来完成对实体类的操作，进而完成业务。<br/>
+那么其中出现Data这种直接访问数据的接口就有些丑陋了。<br/>
+正确的做法事全部放入服务类中去，让测试类仅仅调用服务类接口即可。<br/>
+那么现在有两种做法：
+
+* 第一种在服务类中新写三个方法，并调用Data中的三个对应的方法获得其结果
+* 第二种是直接把Data类中的三个方法移到服务类中去，我倾向于第二种，第一种有脱了裤子放屁的赶脚。
+
+修改时注意两点：
+
+* 第一，把Map和方法的静态声明都去掉；
+* 第二，persist方法和saveCourse方法合并一下
+* 第三，测试代码中：
+	* Data.courses.size()要改为：courseService.list().size()
+	* Data.books.size()要改为：bookService.list().size()
+	* Data.students.size()要改为：studentService.list().size()
+	* 完善这三个list代码
+
+	public List<Course> list() {
+		List<Course> courses = new ArrayList<Course>();
+		for(Course b : Data.course.values()) {
+			courses.add(b);
+		}
+		return courses;
+	}
+
+	public List<Book> list() {
+		List<Book> books = new ArrayList<Book>();
+		for(Book b : Data.books.values()) {
+			books.add(b);
+		}
+		return books;
+	}
+
+	public List<Student> list() {
+		List<Student> students = new ArrayList<Student>();
+		for(Student b : Data.students.values()) {
+			students.add(b);
+		}
+		return students;
+	}
+
+这时，Data类中只剩下了静态Map声明,执行测试,注意用mvn clean清理一下。<br/>
+ 
+接着再把服务类中的方法名改改。<br/>
+
+	saveCourse -> save
+	getCourse -> get
+	saveBook -> save
+	getBook -> get
+	assignBook2Course -> assign
+	saveStudent -> save
+	selectCourse -> select
+	getStudent -> get
+
+就是把方法名中的实体名词去掉。<br/>
+
+*使用eclipse的重构命令如rename、move之后，使用mvn clean清理一下缓存*
+
+<br/>
+在src/main/java下的包里，建tm.demo.entity包，把三个实体类移过去<br/>
+再建tm.demo.service包，把三个服务类移过去<br/>
+再把Data移到tm.demo下<br/>
+ 	
+然后，用Spring注解，把三个服务类注解为@Service，并在测试类中用@Autowired注解自动装载服务类，<br/>
+去掉等号及后面的实例化代码。<br/>
+至此，重构完成。我们得到了层次清晰、接口一致的业务服务设计。
+ 
+##7. 搞定JPA，即数据持久化和查询
+
+登录mysql用下面的命令建个数据库。<br/>
+
+	create database demo default charset="utf8mb4";
+
+不用管建表的事，表在后面会自动建。<br/>
+<br/>
+然后我们开始进行实体类注解过程：<br/>
+按顺序说：<br/>
+    
+打开Book类，在头部写：<br/>
+
+	@Entity //声明这是个实体
+	@Table(name = "books")  //数据表名是books
+
+在属性声明上面写：
+	
+	@Id //id注解，写在id声明语句上面
+	@Column //非关联类属性注解，所有非关联类属性的属性都用它，包括Date类型
+	
+	//用于多对一方向的关联属性，比如Book类中的course属性，要这样写：
+	@ManyToOne(cascade = CascadeType.MERGE, fetch = FetchType.EAGER)
+	@JoinColumn(name = "course_id")
+	
+其中@JoinColumn指明了在books表中，用course_id字段关联Course实体<br/>
+cascade级联方式不用管怎么回事就这么用<br/>
+fetch读取方式，这里的用了EAGER还有一种叫LAZY，就是你用不用懒加载，这里不用。<br/>
+使用懒加载可以提高实体数据读取效率。<br/>
+这个注解用于多对一这一方，对应方向上的Course实体中必然是个Set，要用OneToMany<br/>
+	
+	//多对多注解，用在Book和学生的关联上，这样写
+	@ManyToMany(mappedBy = "books", fetch = FetchType.EAGER)
+
+这里的mappedBy指明在对应方向上的属性是books，在Student实体类中可以见到。<br/>
+这里是非主导方的写法，主导方是Student<br/>
+	
+打开Course类，在头部写：
+
+	@Entity
+	@Table(name = "courses")
+	
+	@Id @Column照上面说的用
+	
+	//用于一对多方向的关联属性
+	@OneToMany(mappedBy = "course", fetch = FetchType.EAGER)
+	private Set<Book> books;
+
+mappedBy明确指出在另外一端的属性是course<br/>
+	
+	@ManyToMany(mappedBy = "courses", fetch = FetchType.EAGER)
+	private Set<Student> students;
+
+同上，这里也是非主导方，主导方是Student<br/>
+
+打开Student类，在头部写：<br/>
+
+	@Entity
+	@Table(name = "students")
+
+	@Id @Column照上面说的用
+	
+	//这里是多对多的主导方了
+	@ManyToMany(cascade = CascadeType.MERGE, fetch = FetchType.EAGER)
+	@JoinTable(name = "student_courses", joinColumns = { @JoinColumn(name = "student_id") }, inverseJoinColumns = {
+		@JoinColumn(name = "course_id") })
+	private Set<Course> courses;
+
+我们知道，多对多关联必定要建立一个关联表，或者叫中间表，表中只有两个关联实体的id，以表明关系<br/>
+在JPA中，多对多关联表是隐含的，使用这个@JoinTable注解，写明<br/>
+
+* name: 关联表表名
+* joinColumns：两个实体的id要用的字段名。 主导方id写在@JoinColumn中，非主导方写在inverseJoinColumns中。
+	
+books属性也一样处理<br/>
+
+	@ManyToMany(cascade = CascadeType.MERGE, fetch = FetchType.EAGER)
+	@JoinTable(name = "student_books", joinColumns = { @JoinColumn(name = "student_id") }, inverseJoinColumns = {
+		@JoinColumn(name = "book_id") })
+	private Set<Book> books;
+	
+清理缓存，运行测试<br/>
+	
+接下来，要把Data类删掉，然后修改Service类<br/>
+在每个Service类加声明，这是JPA上下文环境变量。<br/>
+
+	@PersistenceContext
+	private EntityManager em;
+	
+把原来的保存动作：<br/>
+	
+	DB.bookMap.put(book.getId(), book);
+	改为：
+	em.merge(book);
+	
+	DB.bookMap.get(id);
+	改为：
+	em.find(Book.class,id);
+	
+list函数稍微复杂一点儿：<br/>
+首先在Book实体类头部加这么一句：<br/>
+
+	@NamedQuery(name="Book.all",query="select b from Book b")
+
+这是个命名查询声明<br/>
+然后把list函数中的内容替换成：<br/>
+
+	TypedQuery<Book> typedQuery = em.createNamedQuery("Book.all", Book.class);
+	return typedQuery.getResultList();
+	
+然后在三个函数的上面写上@Transactional，声明这个方法要事务中执行。<br/>
+其余两个service照上面的改，只是类名不同而已。<br/>
+	
+	@NamedQuery(name="Course.all",query="select b from Course b")
+
+	TypedQuery<Course> typedQuery = em.createNamedQuery("Course.all", Course.class);
+	return typedQuery.getResultList();
+
+	@NamedQuery(name="Student.all",query="select b from Student b")
+
+	TypedQuery<Student> typedQuery = em.createNamedQuery("Student.all", Student.class);
+	return typedQuery.getResultList();
+
+要注意的是在CourseService中，有两个独特的方法，select和assignBook<br/>
+它们都修改了Course\Book\Student的实体中的关联属性，<br/>
+这是为了保证参数中的三个实体都是联机状态。<br/>
+	
+在select方法的最后，加上：<br/>
+
+	em.merge(s);
+
+在assign的最后加上：<br/>
+
+	em.merge(b);
+
+*在三个Service类的所有方法上加上事务注解 @Transactional*
+
+修改测试代码，在每一步业务调用之后，都用重新使用get方法取出相关实体对象，用此实体对象进行测试。<br/>
+
+执行测试，修改报错，直到绿条出现。<br/><br/>
+
+至此，服务已与数据库建立的关联，你可以在demo数据库查到测试过程添加的数据了。
+
+*一旦与数据库建立关联，每次测试都会在数据库中新增数据，导致测试无法通过，所以要在测试前清理所有数据*
+
+	@Test
+	public void test0() {
+		courseService.deleteAll();
+		bookService.deleteAll();
+		studentService.deleteAll();
+	}
+
+	@Transactional
+	public void deleteAll() {
+		em.createQuery("delete from Course").executeUpdate();
+	}
+
+	@Transactional
+	public void deleteAll() {
+		em.createQuery("delete from Book").executeUpdate();
+	}
+
+	@Transactional
+	public void deleteAll() {
+		em.createQuery("delete from Student").executeUpdate();
+	}
+
+	
+##8. 接下来，我们要暴露http接口给前端
+
+这要用到Spring Restful的相关注解了。并且，不再使用测试驱动对http接口进行测试，只能用postman这样的工具。<br/>
+http api要按照《天码WebAPI设计规范》来设计。<br/>
+	
+首先在src/main/java下，建立tm.demo.api包<br/>
+在包中新建CourseApi\BookApi\StudentApi三个类<br/>
+	
+分别在每个类头部加上：<br/>
+	
+	@RestController
+	@RequestMapping	
+
+* @RestController //声明这是个rest服务
+* @RequestMapping //声明这个rest服务uri路径
+	
+然后开始写api方法，对照测试类中service接口的使用来写：<br/>
+
+###CourseApi:
+
+	@RestController
+	@RequestMapping
+	public class CourseApi {
+		@Autowired
+		private CourseService courseService;
+
+		//课程登记表 GET /courses
+		@GetMapping("/courses")
+		public List<Course> list() {
+			return courseService.list();
+		}
+
+		//登记课程 POST /courses
+		@PostMapping("/courses")
+		public Course register(@RequestBody Course c) {
+			Long id = GID.gen("course");
+			return courseService.save(id, c.getName(), c.getRequired(), c.getSeats());
+		}
+	}
+
+###BookApi:
+
+	@RestController
+	@RequestMapping
+	public class BookApi {
+		@Autowired
+		private BookService bookService;
+
+		//教材领取表 GET /books
+		@GetMapping("/books")
+		public List<Book> list() {
+			return bookService.list();
+		}
+
+		//登记教材 POST /books
+		@PostMapping("/books")
+		public Book register(@RequestBody Book b) {
+			Long id = GID.gen("book");
+			return bookService.save(id, b.getName(), b.getCount());
+		}
+
+		//为课程指定教材 PUT /books/{book_id}/courses/{course_id}	
+		@PutMapping("/books/{book_id}/courses/{course_id}")
+		public Book assign(@PathVariable(value = "book_id") String book_id,
+				@PathVariable(value = "course_id") String course_id) {
+			bookService.assign(Long.valueOf(book_id), Long.valueOf(course_id));
+			return bookService.get(Long.valueOf(book_id));
+		}
+	}
+
+###StudentApi:
+	
+	学生注册 POST /students
+	学生表 GET /students
+	学生选课及教材 PUT /students/courses/{course_id}/books/{book_id}
+						cookie uid={student_id}
+	选修课通讯录 GET /students/courses/{course_id}/contact
+			  		cookie uid={student_id}
+			  
+在MicroserviceDemoApplication类的头部加上注解 @ComponentScan<br/>
+在application.yml中加上：指明服务端口、编码和api前缀<br/>
+	
+	server:
+		port: 10000
+		tomcat:
+			uri-encoding: UTF-8  
+		servlet:
+		context-path: /api/v1
+  
+MicroserviceDemoApplication, 在日志中可以看到URL映射信息，你的服务就正常启动了。<br/>
+
+下面我们用先用curl简单测试一下<br/>
+
+	curl http://localhost:10000/api/v1/courses
+	curl http://localhost:10000/api/v1/books
+	curl http://localhost:10000/api/v1/students
+
+服务报错，Could not write JSON: Infinite recursion (StackOverflowError); <br/>
+原因是api中spring在序列化成json时形成了死循环<br/>
+因为Student中有Course，而Course中有Student，Book也类似<br/>
+有人提出的解决方案是在实体类的多对一、多对多关联属性上加注解： @JsonBackReference， 禁止spring对其进行序列化<br/>
+多对一关联属性上不必写。这种方案可用，但是明显不能满足业务需求。<br/>
+为了满足业务，我们在实体类中加入一些计算值，比如：<br/>
+在Course中
+
+	@Transient
+	private Integer bookCount;
+	@Transient
+	private Integer studentCount;
+这些计算值是在getter中计算的，用@Transient注解，使其不必持久化。
+
+	public Integer getBookCount() {
+		return this.books.size();
+	}
+
+	public Integer getStudentCount() {
+		return this.students.size();
+	}
+	
+
+##9. 打开postman
+
+创建下列测试命令：
+
+**注意：以下命令的header中都有Content-Type=application/json**
+	
+	学生表 GET http://localhost:10000/api/v1/students
+	教材表 GET http://localhost:10000/api/v1/books
+	课程表 GET http://localhost:10000/api/v1/courses
+	登记课程 POST http://localhost:10000/api/v1/courses
+		body: {
+				"name":"数据结构",
+				"required": true,
+				"seats": 3
+				}
+	登记教材 POST http://localhost:10000/api/v1/books
+		body: {
+			"name":"《数据结构》",
+			"count": 3
+		}
+	指定教材 PUT http://localhost:10000/api/v1/books/{book_id}/courses/{course_id}	
+	学生注册 POST http://localhost:10000/api/v1/students
+		body: {
+				"name":"马云",
+				"contact": 3
+			}
+	选课 PUT http://localhost:10000/api/v1/students/courses/{course_id}/books/{book_id}
+			cookie uid=1
+	选修课通讯录 GET http://localhost:10000/api/v1/students/courses/{course_id}/contact
+				cookie uid=1
+	
+	
+
+在执行登记课程时，api返回了错误json，如下：<br/>
+
+	{
+	    "timestamp": "2018-07-20 06:27:18",
+	    "status": 415,
+	    "error": "Unsupported Media Type",
+	    "message": "Content type 'application/json;charset=UTF-8' not supported",
+	    "path": "/api/v1/courses"
+	}
+
+这也是因为实体类复杂的关联属性引起的，我们需要定制api的RequestBody的解析方案：<br/>
+首先在实体类的头部加注解：
+
+	@JsonDeserialize(builder = Course.CourseBuilder.class)
+
+然后在实体类中加入内部静态类CourseBuilder: 
+
+	public static class CourseBuilder {
+		private String name;
+		private Boolean required;
+		private Integer seats;
+	
+		public CourseBuilder(@JsonProperty("name") String name, @JsonProperty("required") Boolean required,
+				@JsonProperty("seats") Integer seats) {
+			this.name = name;
+			this.required = required;
+			this.seats = seats;
+		}
+	
+		public Course build() {
+			return new Course(this);
+		}
+	}
+	
+	private Course(CourseBuilder builder) {
+		this.name = builder.name;
+		this.required = builder.required;
+		this.seats = builder.seats;
+	}
+
+*要注意的是：使用这种方式时，前面增加的那些计算属性就要去掉，不然会报错。*
+
+Book和Student也同样处理：<br/>
+
+	@JsonDeserialize(builder = Book.BookBuilder.class)
+	
+	public Book(Long id, String name, Integer count) {
+		this.id = id;
+		this.name = name;
+		this.count = count;
+		if (this.created == null)
+			this.created = new Date();
+	}
+	public static class BookBuilder {
+		private String name;
+		private Integer count;
+		public BookBuilder(@JsonProperty("name") String name, @JsonProperty("count") Integer count) {
+			this.name = name;
+			this.count = count;
+		}
+		public Book build() {
+			return new Book(this);
+		}
+	}
+Student类：<br/>
+
+	@JsonDeserialize(builder = Student.StudentBuilder.class)
+	
+	public static class StudentBuilder {
+		private String name;
+		private String contact;
+		public StudentBuilder(@JsonProperty("name") String name, @JsonProperty("contact") String contact) {
+			this.name = name;
+			this.contact = contact;
+		}
+		public Student build() {
+			return new Student(this);
+		}
+	}
+	private Student(StudentBuilder builder) {
+		this.name = builder.name;
+		this.contact = builder.contact;
+	}
+	
+
+启动服务。 <br/>
+##10. 完成。
+<br/>
+
+<br/><br/><br/><br/><br/><br/><br/>
+    
+    
+ 
