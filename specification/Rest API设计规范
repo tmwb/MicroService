@@ -1,0 +1,228 @@
+Rest API设计规范
+###version 1.0.0 
+
+本规范适用于天码公司所有软件平台、产品和项目。
+
+##一、URI
+API与用户的通信协议使用HTTPs。
+
+
+###1. URI格式规范
+
+* URI(Uniform Resource Identifiers) 统一资源标示符
+* URL(Uniform Resource Locator) 统一资源定位符
+
+URI的格式定义如下：
+
+	URI = scheme "://" authority "/" path [ "?" query ] [ "#" fragment ]
+
+URL是URI的一个子集(一种具体实现)，对于Web API来说一个资源一般对应一个唯一的URI(URL)。在URI的设计中，我们会遵循一些规则，使接口看起透明易读，方便使用者调用。
+
+####域名
+应该尽量将API部署在专用域名之下。
+
+	https://api.example.com
+如果确定API很简单，不会有进一步扩展，可以考虑放在主域名下。
+
+	https://example.org/api/
+
+
+####分隔符“/”的使用
+"/"分隔符一般用来对资源层级的划分，例如 
+	
+	http://api.canvas.restapi.org/shapes/polygons/quadrilaterals/squares
+
+对于Web API来说，"/"只是一个分隔符，并无其他含义。为了避免混淆，"/"不应该出现在URL的末尾。例如以下两个地址实际表示的都是同一个资源：
+
+	http://api.canvas.restapi.org/shapes/
+	http://api.canvas.restapi.org/shapes
+
+Web API对URI资源的定义具有唯一性，一个资源对应一个唯一的地址。为了使接口保持清晰干净，如果访问到末尾包含 "/" 的地址，服务端应该301到没有 "/"的地址上。当然这个规则也仅限于Web API接口的访问，对于传统的WEB页面服务来说，并不一定适用这个规则。
+
+####URI中尽量使用连字符"-"代替下划线"_"的使用
+连字符"-"一般用来分割URI中出现的字符串(单词)，来提高URI的可读性，例如：  
+
+	http://api.example.restapi.org/blogs/mark-masse/entries/this-is-my-first-post  
+
+使用下划线"_"来分割字符串(单词)可能会和链接的样式冲突重叠，而影响阅读性。但实际上，"-"和"_"对URL中字符串的分割语意上还是有些差异的：
+
+* "-"分割的字符串(单词)一般各自都具有独立的含义，可参见上面的例子。
+* "_"一般用于对一个整体含义的字符串做了层级的分割，方便阅读，例如你想在URL中体现一个ip地址的信息：210_110_25_88 .
+
+####URI中统一使用小写字母
+根据RFC3986定义，URI是对大小写敏感的，所以为了避免歧义，我们尽量用小写字符。但主机名(Host)和scheme（协议名称:http/ftp/...）对大小写是不敏感的。
+
+####URI中不要包含文件(脚本)的扩展名
+例如 .php .json 之内的就不要出现了，对于接口来说没有任何实际的意义。如果是想对返回的数据内容格式标示的话，通过HTTP Header中的Content-Type字段更好一些。
+
+###2. 版本号（Versioning）
+应该将API的版本号放入URL。
+
+	https://api.example.com/v1/
+
+###3. 资源的原型
+####文档(Document)
+文档是资源的单一表现形式，可以理解为一个对象，或者数据库中的一条记录。在请求文档时，要么返回文档对应的数据，要么会返回一个指向另外一个资源(文档)的链接。以下是几个基于文档定义的URI例子：
+
+	https://api.example.com/v1/users/ID
+
+####集合(Collection)
+集合可以理解为是资源的一个容器(目录)，我们可以向里面添加资源(文档)。例如：
+
+	https://api.example.com/v1/users
+
+####仓库(Store)
+仓库是客户端来管理的一个资源库，客户端可以向仓库中新增资源或者删除资源。客户端也可以批量获取到某个仓库下的所有资源。仓库中的资源对外的访问不会提供单独URI的，客户端在创建资源时候的URI除外。例如：
+
+	PUT /users/1234/favorites/book
+
+上面的例子我们可以理解为，我们向一个id是1234的用户的仓库(收藏夹)中，添加了一个名为book的资源。通俗点儿说：就是用户收藏了一个自己喜爱的书。
+
+####控制器(Controller)
+控制器资源模型，可以执行一个方法，支持参数输入，结果返回。 是为了除了标准操作:增删改查(CRUD)以外的一些逻辑操作。控制器(方法)一般定义子URI中末尾，并且不会有子资源(控制器)。例如:我们向用户重发ID为245743的消息：
+
+	POST /alerts/245743/resend
+
+###5. URI命名规范
+
+* 文档(Document)类型的资源用名词(短语)单数命名
+* 集合(Collection)类型的资源用名词(短语)复数命名
+* 仓库(Store)类型的资源用名词(短语)复数命名
+* 控制器(Controller)类型的资源用**动词(短语)**命名
+
+URI中有些字段可以是变量，在实际使用中可以按需替换
+例如一个资源URI可以这样定义：
+
+	https://api.example.com/v1/users/{userID}
+
+其中：userID是变量(数字，字符串都类型都可以)。
+
+####6. Query字段
+如果记录数量很多，服务器不可能都将它们返回给用户。API应该提供参数，过滤返回结果。
+下面是一些常见的参数。
+
+	?limit=10：指定返回记录的数量
+	?offset=10：指定返回记录的开始位置。
+	?page=2&per_page=100：指定第几页，以及每页的记录数。
+	?sortby=name&order=asc：指定返回结果按照哪个属性排序，以及排序顺序。
+	?animal_type_id=1：指定筛选条件
+
+在Web API中,query字段一般作为查询的参数补充，也可以帮助标示一个唯一的资源。但需要注意的是，作为一个提供查询功能的URI，无论是否有query条件，我们都应该保证结果的唯一性，一个URI对应的返回数据是不应该被改变的(在资源没有修改的情况下)。HTTP中的缓存也可能缓存查询结果，这个也是我们需要知道的。
+
+Query参数可以作为Collection或Store类型资源的过滤条件来使用
+例如：
+
+	GET /users //返回所有用户列表
+	GET /users?role=admin //返回权限为admin的用户列表
+
+Query参数可以作为Collection或Store资源列表分页标示使用
+如果是一个简单的列表操作，可以这样设计： 
+
+	GET /users?pageSize=25&pageStartIndex=50
+
+如果是一个复杂的列表或查询操作的话，我们可以为资源设计一个Collection，因为复杂查询可能会涉及比较多的参数，建议使用Post的方式传入，例如这样：
+
+	POST /users/search
+
+**参数的设计允许存在冗余，即允许API路径和URL参数偶尔有重复。比如，GET /zoo/ID/animals 与 GET /animals?zoo_id=ID 的含义是相同的。**
+
+
+##二、HTTP动词
+对于资源的具体操作类型，由HTTP动词表示。
+常用的HTTP动词有下面五个（括号里是对应的SQL命令）。
+
+* GET（SELECT）：从服务器获取资源（一项）。
+* POST（CREATE）：在服务器创建一个资源。
+* POST (SELECT) ：从服务器获取资源（多项）
+* PUT（UPDATE）：在服务器更新资源（客户端提供改变后的完整资源）。
+* DELETE（DELETE）：从服务器删除资源。
+
+**一旦资源被删除，GET/HEAD方法访问被删除的资源时，要返回404。**
+**DELETE是一个比较纯粹的方法，我们不能对其做任何的重构或者定义，不可附加其它状态条件，如果我们希望"软"删除一个资源，则这种需求应该由Controller类资源来实现。**
+
+下面是一些例子。
+
+	GET /zoos：列出所有动物园
+	POST /zoos：新建一个动物园
+	GET /zoos/ID：获取某个指定动物园的信息
+	PUT /zoos/ID：更新某个指定动物园的信息（提供该动物园的全部信息）
+	DELETE /zoos/ID：删除某个动物园
+	GET /zoos/ID/animals：列出某个指定动物园的所有动物
+	DELETE /zoos/ID/animals/ID：删除某个指定动物园的指定动物
+
+##三、状态码（Status Codes）
+服务器向用户返回的状态码和提示信息，常见的有以下一些（方括号中是该状态码对应的HTTP动词）。
+
+* 200 OK - [GET]：服务器成功返回用户请求的数据，该操作是幂等的（Idempotent）。
+* 201 CREATED - [POST/PUT]：用户新建或修改数据成功。
+* 202 Accepted - [*]：表示一个请求已经进入后台排队（异步任务）
+* 204 NO CONTENT - [DELETE]：用户删除数据成功。
+* 304 Not Modified - [POST/PUT]: 有一些类似于204状态，服务器端的资源与客户端最近访问的资源版本一致，并无修改，不返回资源消息体。可以用来降低服务端的压力
+* 400 BAD REQUEST - [POST/PUT]：用户发出的请求有错误，服务器没有进行新建或修改数据的操作，该操作是幂等的。
+* 401 Unauthorized - [*]：表示用户没有权限（令牌、用户名、密码错误）。
+* 403 Forbidden - [*] 表示用户得到授权（与401错误相对），但是访问是被禁止的。
+* 404 NOT FOUND - [*]：用户发出的请求针对的是不存在的记录，服务器没有进行操作，该操作是幂等的。
+* 405 Method Not Allowed HTTP的方法不支持，例如某些只读资源，可能不支持POST/DELETE。但405的响应header中必须声明该URI所支持的方法
+* 406 Not Acceptable - [GET]：用户请求的格式不可得（比如用户请求JSON格式，但是只有XML格式）。
+* 409 Conflict 资源状态冲突，例如客户端尝试删除一个非空的Store资源
+* 410 Gone -[GET]：用户请求的资源被永久删除，且不会再得到的。
+* 422 Unprocesable entity - [POST/PUT] 当创建一个对象时，发生一个验证错误。
+* 500 INTERNAL SERVER ERROR - [*]：服务器发生错误，用户将无法判断发出的请求是否成功。
+
+
+##四、错误处理（Error handling）
+如果状态码是4xx，就应该向用户返回出错信息。一般来说，返回的信息中将error作为键名，出错信息作为键值即可。
+
+	{
+    	error: "Invalid API key",
+    	description: "错误描述"
+	}
+
+##五、返回结果
+针对不同操作，服务器向用户返回的结果应该符合以下规范。
+
+	GET /collection：返回资源对象的列表（数组）
+	GET /collection/resource：返回单个资源对象
+	POST /collection：返回新生成的资源对象
+	PUT /collection/resource：返回完整的资源对象
+	PATCH /collection/resource：返回完整的资源对象
+	DELETE /collection/resource：返回一个空文档
+
+##六、Hypermedia API
+RESTful API最好做到Hypermedia，即返回结果中提供链接，连向其他API方法，使得用户不查文档，也知道下一步应该做什么。
+比如，当用户向api.example.com的根目录发出请求，会得到这样一个文档。
+
+	{
+		"link": 
+		{
+  			"rel":   "collection https://www.example.com/zoos",
+  			"href":  "https://api.example.com/zoos",
+  			"title": "List of zoos",
+  			"type":  "application/vnd.yourformat+json"
+		}
+	}
+上面代码表示，文档中有一个link属性，用户读取这个属性就知道下一步该调用什么API了。rel表示这个API与当前网址的关系（collection关系，并给出该collection的网址），href表示API的路径，title表示API的标题，type表示返回类型。
+
+Hypermedia API的设计被称为HATEOAS。Github的API就是这种设计，访问api.github.com会得到一个所有可用API的网址列表。
+
+	{
+  		"current_user_url": "https://api.github.com/user",
+  		"authorizations_url": "https://api.github.com/authorizations",
+  		// ...
+	}
+
+从上面可以看到，如果想获取当前用户的信息，应该去访问api.github.com/user，然后就得到了下面结果。
+
+	{
+  		"message": "Requires authentication",
+  		"documentation_url": "https://developer.github.com/v3"
+	}
+
+上面代码表示，服务器给出了提示信息，以及文档的网址。
+
+#七、其他
+
+* API的身份认证应该使用OAuth 2.0框架。
+* 服务器返回的数据格式，应该使用JSON，避免使用XML。
+
+
